@@ -167,197 +167,163 @@ async function earlyAccessRegister(walletAddress, bearerToken) {
   return r.json();
 }
 
-// ── Twitter OAuth: Step 1 – privy oauth init ──────────────────────────────────
-async function privyOAuthInit(privyToken) {
-  const codeVerifier  = generateCodeVerifier();
-  const codeChallenge = generateCodeChallenge(codeVerifier);
-
-  // state = random string
-  const state = crypto.randomBytes(32).toString("base64url");
-
-  const r = await fetch(`${AUTH_URL}/api/v1/oauth/init`, {
+// ── Twitter OAuth: Step 1 – GET sessions (dapat refresh_token) ───────────────
+async function privyGetSession(privyToken) {
+  const r = await fetch(`${AUTH_URL}/api/v1/sessions`, {
     method : "POST",
     headers: buildHeaders({
-      "Authorization"  : `Bearer ${privyToken}`,
-      "Referer"        : `${BASE_URL}/`,
-      "Sec-Fetch-Site" : "cross-site",
-      "Privy-App-Id"   : PRIVY_APP_ID,
-      "Privy-Ca-Id"    : PRIVY_CA_ID,
-      "Privy-Client"   : "react-auth:3.5.1",
+      "Authorization"           : `Bearer ${privyToken}`,
+      "Referer"                 : `${BASE_URL}/`,
+      "Sec-Fetch-Site"          : "cross-site",
+      "Sec-Fetch-Storage-Access": "active",
+      "Privy-App-Id"            : PRIVY_APP_ID,
+      "Privy-Ca-Id"             : "77d9238a-53d3-4b00-90bd-9907ca3d839e",
+      "Privy-Client"            : "react-auth:3.5.1",
     }),
-    body: JSON.stringify({
-      provider    : "twitter",
-      redirect_to : `${BASE_URL}/`,
-    }),
+    body: JSON.stringify({ refresh_token: null }),
   });
-  const respText = await r.text();
-  if (!r.ok) throw new Error(`oauthInit HTTP ${r.status}: ${respText}`);
-  const data = await JSON.parse(respText);
-  log(`[oauthInit] response: ${JSON.stringify(data)}`);
-  return { ...data, codeVerifier, codeChallenge };
+  if (!r.ok) throw new Error(`sessions HTTP ${r.status}: ${await r.text()}`);
+  const data = await r.json();
+  return data; // { token, refresh_token, ... }
 }
 
-// ── Twitter OAuth: Step 2 – GET authorize page (dapat auth_code) ──────────────
-async function twitterGetAuthCode(authorizationUrl, authToken, ct0) {
-  // Parse params dari authorization_url
-  const url    = new URL(authorizationUrl);
-  const state  = url.searchParams.get("state");
-  const clientId     = url.searchParams.get("client_id");
-  const codeChallenge = url.searchParams.get("code_challenge");
-  const redirectUri  = url.searchParams.get("redirect_uri");
+// ── Twitter OAuth: Step 2 – Build Twitter authorize URL & GET it ──────────────
+async function twitterGetAuthCode(authToken, ct0) {
+  const codeVerifier  = generateCodeVerifier();
+  const codeChallenge = generateCodeChallenge(codeVerifier);
+  const state         = crypto.randomBytes(16).toString("base64url");
 
-  // GET halaman authorize di X
-  const getR = await fetch(authorizationUrl, {
+  // Client ID dari screenshot image 4
+  const CLIENT_ID    = "YlJMT0QtbzB1RU1kaDd6Q2xPem06MTpjaQ";
+  const REDIRECT_URI = `${AUTH_URL}/api/v1/oauth/callback`;
+
+  const authorizeUrl = new URL("https://x.com/i/oauth2/authorize");
+  authorizeUrl.searchParams.set("response_type",          "code");
+  authorizeUrl.searchParams.set("client_id",              CLIENT_ID);
+  authorizeUrl.searchParams.set("redirect_uri",           REDIRECT_URI);
+  authorizeUrl.searchParams.set("scope",                  "users.read tweet.read");
+  authorizeUrl.searchParams.set("state",                  state);
+  authorizeUrl.searchParams.set("code_challenge",         codeChallenge);
+  authorizeUrl.searchParams.set("code_challenge_method",  "S256");
+
+  // GET halaman authorize untuk dapat "code" form token
+  const getR = await fetch(authorizeUrl.toString(), {
     method : "GET",
     headers: {
-      "User-Agent"     : "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
-      "Accept"         : "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-      "Accept-Language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
-      "Sec-Fetch-Dest" : "document",
-      "Sec-Fetch-Mode" : "navigate",
-      "Sec-Fetch-Site" : "cross-site",
+      "User-Agent"              : "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+      "Accept"                  : "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+      "Accept-Language"         : "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
+      "Sec-Fetch-Dest"          : "document",
+      "Sec-Fetch-Mode"          : "navigate",
+      "Sec-Fetch-Site"          : "cross-site",
       "Upgrade-Insecure-Requests": "1",
-      "Cookie"         : `auth_token=${authToken}; ct0=${ct0}`,
-      "Referer"        : "https://x.com/",
-    },
-    redirect: "manual",
-  });
-
-  // Ambil auth_code dari response body (ada di JSON viewer.json atau di HTML)
-  // X akan redirect ke privy callback dengan code
-  // Kalau status 200, parse auth_code dari HTML atau JSON
-  const body = await getR.text();
-
-  // Coba extract auth_code dari meta atau script
-  // X OAuth2 approval page ada form dengan hidden "code"
-  const codeMatch = body.match(/"authCode"\s*:\s*"([^"]+)"/);
-  if (codeMatch) return codeMatch[1];
-
-  // Alternatif: ambil dari Location header kalau redirect
-  const location = getR.headers.get("location");
-  if (location) {
-    const locUrl  = new URL(location);
-    const code    = locUrl.searchParams.get("code");
-    if (code) return code;
-  }
-
-  throw new Error(`Gagal dapat auth_code dari Twitter. Status: ${getR.status}`);
-}
-
-// ── Twitter OAuth: Step 3 – POST approval ─────────────────────────────────────
-async function twitterApprove(authorizationUrl, authToken, ct0) {
-  const url      = new URL(authorizationUrl);
-  const state    = url.searchParams.get("state");
-  const clientId = url.searchParams.get("client_id");
-
-  // POST approve
-  const body = new URLSearchParams({
-    approval      : "true",
-    code          : await twitterGetAuthCodeFromApproval(authorizationUrl, authToken, ct0),
-    consent_flow  : "web_consent",
-  });
-
-  const r = await fetch(`${TWITTER_API}/2/oauth2/authorize`, {
-    method : "POST",
-    headers: {
-      "User-Agent"          : "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
-      "Accept"              : "*/*",
-      "Accept-Language"     : "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
-      "Content-Type"        : "application/x-www-form-urlencoded",
-      "Sec-Fetch-Dest"      : "empty",
-      "Sec-Fetch-Mode"      : "cors",
-      "Sec-Fetch-Site"      : "same-site",
-      "Origin"              : "https://x.com",
-      "Referer"             : "https://x.com/",
-      "Authorization"       : `Bearer AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`,
-      "X-Csrf-Token"        : ct0,
-      "Cookie"              : `auth_token=${authToken}; ct0=${ct0}`,
-      "X-Twitter-Auth-Type" : "OAuth2Session",
-      "X-Twitter-Client-Language": "id",
-    },
-    body: body.toString(),
-    redirect: "manual",
-  });
-
-  // Response berisi redirect ke privy callback dengan code
-  const location = r.headers.get("location");
-  if (location) {
-    const locUrl = new URL(location);
-    const code   = locUrl.searchParams.get("code");
-    if (code) return { code, state: locUrl.searchParams.get("state") || state };
-  }
-
-  const respText = await r.text();
-  // Coba parse JSON response (X kadang return JSON dengan redirect_uri)
-  try {
-    const json = JSON.parse(respText);
-    if (json.redirect_uri) {
-      const ru   = new URL(json.redirect_uri);
-      const code = ru.searchParams.get("code");
-      if (code) return { code, state: ru.searchParams.get("state") || state };
-    }
-  } catch {}
-
-  throw new Error(`twitterApprove gagal. Status: ${r.status} Body: ${respText.slice(0, 200)}`);
-}
-
-// Ambil "code" token dari halaman GET authorize (form hidden input)
-async function twitterGetAuthCodeFromApproval(authorizationUrl, authToken, ct0) {
-  const r = await fetch(authorizationUrl, {
-    method : "GET",
-    headers: {
-      "User-Agent"     : "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
-      "Accept"         : "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      "Accept-Language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
-      "Sec-Fetch-Dest" : "document",
-      "Sec-Fetch-Mode" : "navigate",
-      "Sec-Fetch-Site" : "cross-site",
-      "Upgrade-Insecure-Requests": "1",
-      "Cookie"         : `auth_token=${authToken}; ct0=${ct0}`,
-      "Referer"        : "https://x.com/",
+      "Cookie"                  : `auth_token=${authToken}; ct0=${ct0}`,
+      "Referer"                 : "https://enterforever.com/",
     },
     redirect: "follow",
   });
 
-  const html = await r.text();
+  const html = await getR.text();
 
-  // X menyimpan auth code di hidden input atau JSON dalam script
-  // Pattern 1: <input name="code" value="...">
+  // Extract "code" form token dari HTML (bukan authorization_code)
   const m1 = html.match(/name="code"\s+value="([^"]+)"/);
-  if (m1) return m1[1];
+  if (m1) return { formCode: m1[1], state, codeVerifier, CLIENT_ID, REDIRECT_URI };
 
-  // Pattern 2: "code":"..."
-  const m2 = html.match(/"code"\s*:\s*"([A-Za-z0-9_\-]{20,})"/);
-  if (m2) return m2[1];
+  const m2 = html.match(/value="([^"]+)"\s+name="code"/);
+  if (m2) return { formCode: m2[1], state, codeVerifier, CLIENT_ID, REDIRECT_URI };
 
-  // Pattern 3: value="..." di form (urutan berbeda)
-  const m3 = html.match(/value="([A-Za-z0-9_\-]{40,})"/);
-  if (m3) return m3[1];
+  // Kalau langsung redirect ke callback (sudah pernah approve sebelumnya)
+  if (getR.url.includes("privy.io") || getR.url.includes("enterforever.com")) {
+    const redirectUrl = new URL(getR.url);
+    const authCode    = redirectUrl.searchParams.get("code");
+    const retState    = redirectUrl.searchParams.get("state");
+    if (authCode) return { authorizationCode: authCode, state: retState || state, codeVerifier, CLIENT_ID, REDIRECT_URI, alreadyApproved: true };
+  }
 
-  throw new Error(`Gagal extract code dari halaman Twitter authorize`);
+  throw new Error(`Gagal extract form code dari Twitter authorize. HTML snippet: ${html.slice(0, 300)}`);
 }
 
-// ── Twitter OAuth: Step 4 – privy oauth callback ──────────────────────────────
-async function privyOAuthCallback(code, state, codeVerifier, privyToken) {
-  const r = await fetch(`${AUTH_URL}/api/v1/oauth/callback`, {
+// ── Twitter OAuth: Step 3 – POST approval ke X ────────────────────────────────
+async function twitterApprove(authToken, ct0) {
+  const { formCode, state, codeVerifier, CLIENT_ID, REDIRECT_URI, authorizationCode, alreadyApproved } = await twitterGetAuthCode(authToken, ct0);
+
+  // Kalau sudah auto-approve (pernah login sebelumnya)
+  if (alreadyApproved) return { authorizationCode, state, codeVerifier };
+
+  const body = new URLSearchParams({
+    approval     : "true",
+    code         : formCode,
+    consent_flow : "web_consent",
+  });
+
+  // Bearer token publik Twitter untuk OAuth2
+  const TWITTER_BEARER = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA";
+
+  const r = await fetch(`${TWITTER_API}/2/oauth2/authorize`, {
+    method : "POST",
+    headers: {
+      "User-Agent"           : "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+      "Accept"               : "*/*",
+      "Accept-Language"      : "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
+      "Content-Type"         : "application/x-www-form-urlencoded",
+      "Authorization"        : `Bearer ${TWITTER_BEARER}`,
+      "X-Csrf-Token"         : ct0,
+      "X-Twitter-Auth-Type"  : "OAuth2Session",
+      "X-Twitter-Client-Language": "id",
+      "Cookie"               : `auth_token=${authToken}; ct0=${ct0}`,
+      "Origin"               : "https://x.com",
+      "Referer"              : "https://x.com/",
+      "Sec-Fetch-Dest"       : "empty",
+      "Sec-Fetch-Mode"       : "cors",
+      "Sec-Fetch-Site"       : "same-site",
+    },
+    body    : body.toString(),
+    redirect: "manual",
+  });
+
+  // Cek redirect location untuk authorization_code
+  const location = r.headers.get("location");
+  if (location) {
+    const locUrl = new URL(location);
+    const code   = locUrl.searchParams.get("code");
+    const st     = locUrl.searchParams.get("state");
+    if (code) return { authorizationCode: code, state: st || state, codeVerifier };
+  }
+
+  // Coba parse body JSON
+  const text = await r.text();
+  try {
+    const json = JSON.parse(text);
+    if (json.redirect_uri) {
+      const ru   = new URL(json.redirect_uri);
+      const code = ru.searchParams.get("code");
+      if (code) return { authorizationCode: code, state: ru.searchParams.get("state") || state, codeVerifier };
+    }
+  } catch {}
+
+  throw new Error(`twitterApprove gagal. Status: ${r.status}, Body: ${text.slice(0, 300)}`);
+}
+
+// ── Twitter OAuth: Step 4 – POST /api/v1/oauth/link ke Privy ─────────────────
+async function privyOAuthLink(authorizationCode, codeVerifier, stateCode, privyToken) {
+  const r = await fetch(`${AUTH_URL}/api/v1/oauth/link`, {
     method : "POST",
     headers: buildHeaders({
-      "Authorization" : `Bearer ${privyToken}`,
-      "Referer"       : `${BASE_URL}/`,
-      "Sec-Fetch-Site": "cross-site",
-      "Privy-App-Id"  : PRIVY_APP_ID,
-      "Privy-Ca-Id"   : PRIVY_CA_ID,
-      "Privy-Client"  : "react-auth:3.5.1",
+      "Authorization"           : `Bearer ${privyToken}`,
+      "Referer"                 : `${BASE_URL}/`,
+      "Sec-Fetch-Site"          : "cross-site",
+      "Sec-Fetch-Storage-Access": "active",
+      "Privy-App-Id"            : PRIVY_APP_ID,
+      "Privy-Ca-Id"             : "77d9238a-53d3-4b00-90bd-9907ca3d839e",
+      "Privy-Client"            : "react-auth:3.5.1",
     }),
     body: JSON.stringify({
-      provider      : "twitter",
-      code,
-      state,
-      redirect_uri  : `${AUTH_URL}/api/v1/oauth/callback`,
-      code_verifier : codeVerifier,
+      authorization_code : authorizationCode,
+      code_verifier      : codeVerifier,
+      state_code         : stateCode,
     }),
   });
-  if (!r.ok) throw new Error(`oauthCallback HTTP ${r.status}: ${await r.text()}`);
+  if (!r.ok) throw new Error(`oauthLink HTTP ${r.status}: ${await r.text()}`);
   return r.json();
 }
 
@@ -367,19 +333,15 @@ async function linkTwitter(index, privyToken, twitterAccount) {
 
   log(`[${index + 1}] 🐦  Link Twitter dimulai...`);
 
-  // 1. Init OAuth di Privy
-  const { state, authorization_url, codeVerifier } = await privyOAuthInit(privyToken);
-  log(`[${index + 1}] ✅  OAuth init OK, state: ${state.slice(0, 20)}…`);
+  // 1. GET Twitter authorize + POST approve → dapat authorization_code
+  const { authorizationCode, state, codeVerifier } = await twitterApprove(auth_token, ct0);
+  log(`[${index + 1}] ✅  Twitter approved, code: ${authorizationCode.slice(0, 20)}…`);
 
-  // 2. GET + POST approve di Twitter
-  const { code } = await twitterApprove(authorization_url, auth_token, ct0);
-  log(`[${index + 1}] ✅  Twitter approved, code: ${code.slice(0, 20)}…`);
+  // 2. POST ke Privy /oauth/link
+  const linkData = await privyOAuthLink(authorizationCode, codeVerifier, state, privyToken);
+  log(`[${index + 1}] ✅  Twitter linked: ${JSON.stringify(linkData).slice(0, 150)}`);
 
-  // 3. Callback ke Privy
-  const callbackData = await privyOAuthCallback(code, state, codeVerifier, privyToken);
-  log(`[${index + 1}] ✅  Twitter linked: ${JSON.stringify(callbackData).slice(0, 100)}`);
-
-  return callbackData;
+  return linkData;
 }
 
 // ── Per-wallet flow ───────────────────────────────────────────────────────────
