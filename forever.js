@@ -364,16 +364,17 @@ async function linkTwitter(index, privyToken, twitterAccount) {
   const state         = crypto.randomBytes(32).toString("base64url");
 
   // 0. Register flow dengan Privy agar state dikenali saat /oauth/link
-  await privyOAuthInit(privyToken, codeChallenge, state);
-  log(`[${index + 1}] ✅  OAuth init OK`);
+  const initData      = await privyOAuthInit(privyToken, codeChallenge, state);
+  const effectiveState = initData.state_code || initData.state || state;
+  log(`[${index + 1}] ✅  OAuth init OK: ${JSON.stringify(initData).slice(0, 300)}`);
 
   // 1. GET Twitter authorize + POST approve → dapat authorization_code
-  const { authorizationCode } = await twitterApprove(auth_token, ct0, state, codeVerifier, codeChallenge);
+  const { authorizationCode } = await twitterApprove(auth_token, ct0, effectiveState, codeVerifier, codeChallenge);
   log(`[${index + 1}] ✅  Twitter approved, code: ${authorizationCode.slice(0, 20)}…`);
 
   // 2. POST ke Privy /oauth/link
-  log(`[${index + 1}] 🔗  oauthLink payload: code=${authorizationCode.slice(0,20)}… verifier=${codeVerifier.slice(0,20)}… state=${state}`);
-  const linkData = await privyOAuthLink(authorizationCode, codeVerifier, state, privyToken);
+  log(`[${index + 1}] 🔗  oauthLink payload: code=${authorizationCode.slice(0,20)}… verifier=${codeVerifier.slice(0,20)}… state=${effectiveState}`);
+  const linkData = await privyOAuthLink(authorizationCode, codeVerifier, effectiveState, privyToken);
   log(`[${index + 1}] ✅  Twitter linked: ${JSON.stringify(linkData).slice(0, 150)}`);
 
   return linkData;
