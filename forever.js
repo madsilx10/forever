@@ -246,8 +246,13 @@ async function postTweet(authToken, ct0) {
       },
     }),
   });
-  if (!r.ok) throw new Error(`postTweet HTTP ${r.status}: ${await r.text()}`);
-  return r.json();
+  const text = await r.text();
+  log(`[postTweet] status: ${r.status}, body: ${text.slice(0, 500)}`);
+  if (!r.ok) throw new Error(`postTweet HTTP ${r.status}: ${text}`);
+  const json = JSON.parse(text);
+  // GraphQL path: data.create_tweet.tweet_results.result.rest_id
+  const tweetId = json?.data?.create_tweet?.tweet_results?.result?.rest_id;
+  return { data: { id: tweetId }, raw: json };
 }
 
 // ── Twitter OAuth: Step 0 – Register OAuth flow dengan Privy ─────────────────
@@ -417,27 +422,34 @@ async function privyOAuthLink(authorizationCode, codeVerifier, stateCode, privyT
 
 // ── Twitter OAuth: Step 4b – hit Privy callback langsung (Privy handle exchange) ─
 async function privyOAuthCallback(callbackUrl, privyToken) {
-  const r = await fetch(callbackUrl, {
-    method  : "GET",
-    headers : {
-      "User-Agent"              : "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
-      "Accept"                  : "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      "Authorization"           : `Bearer ${privyToken}`,
-      "Privy-App-Id"            : PRIVY_APP_ID,
-      "Privy-Ca-Id"             : "77d9238a-53d3-4b00-90bd-9907ca3d839e",
-      "Privy-Client"            : "react-auth:3.5.1",
-      "Referer"                 : "https://x.com/",
-      "Sec-Fetch-Dest"          : "document",
-      "Sec-Fetch-Mode"          : "navigate",
-      "Sec-Fetch-Site"          : "cross-site",
-    },
-    redirect: "manual",
-  });
+  const privyHeaders = {
+    "User-Agent"   : "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+    "Accept"       : "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Authorization": `Bearer ${privyToken}`,
+    "Privy-App-Id" : PRIVY_APP_ID,
+    "Privy-Ca-Id"  : "77d9238a-53d3-4b00-90bd-9907ca3d839e",
+    "Privy-Client" : "react-auth:3.5.1",
+    "Referer"      : "https://x.com/",
+  };
+
+  const r = await fetch(callbackUrl, { method: "GET", headers: privyHeaders, redirect: "manual" });
   const text = await r.text();
   log(`[oauthCallback] status: ${r.status}, body: ${text.slice(0, 200)}`);
   const location = r.headers.get("location");
   if (location) log(`[oauthCallback] redirect → ${location.slice(0, 200)}`);
   if (r.status >= 400) throw new Error(`oauthCallback HTTP ${r.status}: ${text}`);
+
+  // Follow 307 redirect ke Privy internal callback (privy_oauth_code)
+  if ((r.status === 301 || r.status === 302 || r.status === 307) && location) {
+    const r2 = await fetch(location, { method: "GET", headers: privyHeaders, redirect: "manual" });
+    const text2 = await r2.text();
+    log(`[oauthCallback2] status: ${r2.status}, body: ${text2.slice(0, 200)}`);
+    const location2 = r2.headers.get("location");
+    if (location2) log(`[oauthCallback2] redirect → ${location2.slice(0, 200)}`);
+    if (r2.status >= 400) throw new Error(`oauthCallback2 HTTP ${r2.status}: ${text2}`);
+    return { status: r2.status, location: location2 };
+  }
+
   return { status: r.status, location };
 }
 
@@ -522,18 +534,6 @@ async function processWallet(privkey, index, twitterAccount) {
       log(`[${index + 1}] ✅  Share: ${JSON.stringify(shareData)}`);
     } catch (sErr) {
       log(`[${index + 1}] ⚠️  Share gagal: ${sErr.message}`);
-    }
-
-    // 7. Post tweet
-    if (twitterAccount) {
-      try {
-        const tweetData = await postTweet(twitterAccount.auth_token, twitterAccount.ct0);
-        log(`[${index + 1}] ✅  Tweet posted: id=${tweetData?.data?.id}`);
-      } catch (tErr) {
-        log(`[${index + 1}] ⚠️  Tweet gagal: ${tErr.message}`);
-      }
-    } else {
-      log(`[${index + 1}] ⏭  Tidak ada akun Twitter, skip X post.`);
     }
 
     return { status: "success", address: addr };
