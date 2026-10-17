@@ -188,7 +188,7 @@ async function privyGetSession(privyToken) {
 }
 
 // ── Twitter OAuth: Step 0 – Register OAuth flow dengan Privy ─────────────────
-async function privyOAuthInit(privyToken) {
+async function privyOAuthInit(privyToken, codeChallenge, stateCode) {
   const r = await fetch(`${AUTH_URL}/api/v1/oauth/init`, {
     method : "POST",
     headers: buildHeaders({
@@ -201,8 +201,11 @@ async function privyOAuthInit(privyToken) {
       "Privy-Client"            : "react-auth:3.5.1",
     }),
     body: JSON.stringify({
-      provider   : "twitter",
-      redirect_to: `${AUTH_URL}/api/v1/oauth/callback`,
+      provider              : "twitter",
+      code_challenge        : codeChallenge,
+      code_challenge_method : "S256",
+      state_code            : stateCode,
+      redirect_to           : `${AUTH_URL}/api/v1/oauth/callback`,
     }),
   });
   if (!r.ok) throw new Error(`oauthInit HTTP ${r.status}: ${await r.text()}`);
@@ -381,11 +384,15 @@ async function linkTwitter(index, privyToken, twitterAccount) {
 
   log(`[${index + 1}] 🐦  Link Twitter dimulai...`);
 
-  // 0. Init via Privy – biar Privy generate state + code_challenge sendiri
-  const initData = await privyOAuthInit(privyToken);
+  // 0. Init via Privy – kirim PKCE kita (required by API), tapi pakai params dari URL Privy untuk request X
+  const ourVerifier   = generateCodeVerifier();
+  const ourChallenge  = generateCodeChallenge(ourVerifier);
+  const ourState      = crypto.randomBytes(32).toString("base64url");
+
+  const initData = await privyOAuthInit(privyToken, ourChallenge, ourState);
   log(`[${index + 1}] ✅  OAuth init OK: ${JSON.stringify(initData).slice(0, 300)}`);
 
-  // Parse params dari URL Privy (bukan generate sendiri)
+  // Privy generate state + code_challenge sendiri → ambil dari URL-nya
   const privyUrl      = new URL(initData.url);
   const state         = privyUrl.searchParams.get("state");
   const codeChallenge = privyUrl.searchParams.get("code_challenge");
