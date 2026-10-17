@@ -187,60 +187,65 @@ async function privyGetSession(privyToken) {
   return data; // { token, refresh_token, ... }
 }
 
-// ── Twitter OAuth: Step 2 – Build Twitter authorize URL & GET it ──────────────
+// ── Twitter OAuth: Step 2 – Get auth_code via X API JSON endpoint ─────────────
 async function twitterGetAuthCode(authToken, ct0) {
   const codeVerifier  = generateCodeVerifier();
   const codeChallenge = generateCodeChallenge(codeVerifier);
   const state         = crypto.randomBytes(16).toString("base64url");
 
-  // Client ID dari screenshot image 4
   const CLIENT_ID    = "YlJMT0QtbzB1RU1kaDd6Q2xPem06MTpjaQ";
   const REDIRECT_URI = `${AUTH_URL}/api/v1/oauth/callback`;
+  const TWITTER_BEARER = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA";
 
-  const authorizeUrl = new URL("https://x.com/i/oauth2/authorize");
-  authorizeUrl.searchParams.set("response_type",          "code");
-  authorizeUrl.searchParams.set("client_id",              CLIENT_ID);
-  authorizeUrl.searchParams.set("redirect_uri",           REDIRECT_URI);
-  authorizeUrl.searchParams.set("scope",                  "users.read tweet.read");
-  authorizeUrl.searchParams.set("state",                  state);
-  authorizeUrl.searchParams.set("code_challenge",         codeChallenge);
-  authorizeUrl.searchParams.set("code_challenge_method",  "S256");
-
-  // GET halaman authorize untuk dapat "code" form token
-  const getR = await fetch(authorizeUrl.toString(), {
-    method : "GET",
-    headers: {
-      "User-Agent"              : "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
-      "Accept"                  : "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-      "Accept-Language"         : "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
-      "Sec-Fetch-Dest"          : "document",
-      "Sec-Fetch-Mode"          : "navigate",
-      "Sec-Fetch-Site"          : "cross-site",
-      "Upgrade-Insecure-Requests": "1",
-      "Cookie"                  : `auth_token=${authToken}; ct0=${ct0}`,
-      "Referer"                 : "https://enterforever.com/",
-    },
-    redirect: "follow",
+  // Params untuk authorize
+  const params = new URLSearchParams({
+    response_type         : "code",
+    client_id             : CLIENT_ID,
+    redirect_uri          : REDIRECT_URI,
+    scope                 : "users.read tweet.read",
+    state                 : state,
+    code_challenge        : codeChallenge,
+    code_challenge_method : "S256",
   });
 
-  const html = await getR.text();
+  // X punya endpoint JSON: GET /2/oauth2/authorize?... dengan Accept: application/json
+  const r = await fetch(`${TWITTER_API}/2/oauth2/authorize?${params.toString()}`, {
+    method : "GET",
+    headers: {
+      "User-Agent"           : "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+      "Accept"               : "application/json",
+      "Accept-Language"      : "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
+      "Authorization"        : `Bearer ${TWITTER_BEARER}`,
+      "X-Csrf-Token"         : ct0,
+      "X-Twitter-Auth-Type"  : "OAuth2Session",
+      "X-Twitter-Client-Language": "id",
+      "Cookie"               : `auth_token=${authToken}; ct0=${ct0}`,
+      "Referer"              : "https://x.com/",
+      "Sec-Fetch-Dest"       : "empty",
+      "Sec-Fetch-Mode"       : "cors",
+      "Sec-Fetch-Site"       : "same-site",
+    },
+  });
 
-  // Extract "code" form token dari HTML (bukan authorization_code)
-  const m1 = html.match(/name="code"\s+value="([^"]+)"/);
-  if (m1) return { formCode: m1[1], state, codeVerifier, CLIENT_ID, REDIRECT_URI };
+  const text = await r.text();
+  log(`[twitterGetAuthCode] status: ${r.status}, body: ${text.slice(0, 200)}`);
 
-  const m2 = html.match(/value="([^"]+)"\s+name="code"/);
-  if (m2) return { formCode: m2[1], state, codeVerifier, CLIENT_ID, REDIRECT_URI };
+  // Response JSON berisi { auth_code: "..." } atau { code: "..." }
+  let formCode;
+  try {
+    const json = JSON.parse(text);
+    formCode = json.auth_code || json.code || json.authCode;
+    // Kalau sudah auto-approved, langsung dapat authorization_code
+    if (json.redirect_uri) {
+      const ru = new URL(json.redirect_uri);
+      const ac = ru.searchParams.get("code");
+      if (ac) return { authorizationCode: ac, state: ru.searchParams.get("state") || state, codeVerifier, alreadyApproved: true };
+    }
+  } catch {}
 
-  // Kalau langsung redirect ke callback (sudah pernah approve sebelumnya)
-  if (getR.url.includes("privy.io") || getR.url.includes("enterforever.com")) {
-    const redirectUrl = new URL(getR.url);
-    const authCode    = redirectUrl.searchParams.get("code");
-    const retState    = redirectUrl.searchParams.get("state");
-    if (authCode) return { authorizationCode: authCode, state: retState || state, codeVerifier, CLIENT_ID, REDIRECT_URI, alreadyApproved: true };
-  }
+  if (!formCode) throw new Error(`Gagal dapat auth_code dari X API. Status: ${r.status}, Body: ${text.slice(0, 300)}`);
 
-  throw new Error(`Gagal extract form code dari Twitter authorize. HTML snippet: ${html.slice(0, 300)}`);
+  return { formCode, state, codeVerifier, CLIENT_ID, REDIRECT_URI };
 }
 
 // ── Twitter OAuth: Step 3 – POST approval ke X ────────────────────────────────
