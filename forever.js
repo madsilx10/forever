@@ -183,11 +183,11 @@ async function privyOAuthInit(privyToken) {
       "Privy-Client"   : "react-auth:3.5.1",
     }),
     body: JSON.stringify({
-      provider         : "twitter",
-      redirect_uri     : `${AUTH_URL}/api/v1/oauth/callback`,
-      response_type    : "code",
-      scope            : "users.read tweet.read",
-      code_challenge   : codeChallenge,
+      provider             : "twitter",
+      redirect_to          : `${BASE_URL}/`,
+      response_type        : "code",
+      scope                : "users.read tweet.read",
+      code_challenge       : codeChallenge,
       code_challenge_method: "S256",
     }),
   });
