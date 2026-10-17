@@ -459,29 +459,28 @@ async function linkTwitter(index, privyToken, twitterAccount) {
 
   log(`[${index + 1}] 🐦  Link Twitter dimulai...`);
 
-  // 0. Init via Privy – kirim PKCE kita (required by API), tapi pakai params dari URL Privy untuk request X
+  // 0. Init: kirim PKCE kita ke Privy
   const ourVerifier   = generateCodeVerifier();
   const ourChallenge  = generateCodeChallenge(ourVerifier);
   const ourState      = crypto.randomBytes(32).toString("base64url");
 
   const initData = await privyOAuthInit(privyToken, ourChallenge, ourState);
-  log(`[${index + 1}] ✅  OAuth init OK: ${JSON.stringify(initData).slice(0, 300)}`);
+  log(`[${index + 1}] ✅  OAuth init OK`);
 
   // Privy generate state + code_challenge sendiri → ambil dari URL-nya
   const privyUrl      = new URL(initData.url);
   const state         = privyUrl.searchParams.get("state");
   const codeChallenge = privyUrl.searchParams.get("code_challenge");
 
-  // 1. GET Twitter authorize + POST approve → dapat authorization_code + callbackUrl
-  const { authorizationCode, callbackUrl } = await twitterApprove(auth_token, ct0, state, codeChallenge);
+  // 1. Twitter approve → dapat authorization_code
+  const { authorizationCode } = await twitterApprove(auth_token, ct0, state, codeChallenge);
   log(`[${index + 1}] ✅  Twitter approved, code: ${authorizationCode.slice(0, 20)}…`);
 
-  // 2. Hit Privy callback langsung – Privy exchange code server-side pakai verifier-nya sendiri
-  log(`[${index + 1}] 🔗  oauthCallback: ${callbackUrl.slice(0, 100)}…`);
-  const result = await privyOAuthCallback(callbackUrl, privyToken);
-  log(`[${index + 1}] ✅  Twitter linked (status ${result.status})`);
+  // 2. POST ke /api/v1/oauth/link → Privy exchange code + link akun
+  const linkData = await privyOAuthLink(authorizationCode, ourVerifier, ourState, privyToken);
+  log(`[${index + 1}] ✅  Twitter linked: ${JSON.stringify(linkData).slice(0, 200)}`);
 
-  return result;
+  return linkData;
 }
 
 // ── Per-wallet flow ───────────────────────────────────────────────────────────
