@@ -204,7 +204,7 @@ async function privyOAuthInit(privyToken, codeChallenge, state) {
       provider              : "twitter",
       code_challenge        : codeChallenge,
       code_challenge_method : "S256",
-      state                 : state,
+      state_code            : state,
       redirect_to           : `${AUTH_URL}/api/v1/oauth/callback`,
     }),
   });
