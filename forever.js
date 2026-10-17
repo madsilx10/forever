@@ -299,9 +299,10 @@ async function twitterApprove(authToken, ct0) {
   try {
     const json = JSON.parse(text);
     if (json.redirect_uri) {
-      const ru   = new URL(json.redirect_uri);
-      const code = ru.searchParams.get("code");
-      if (code) return { authorizationCode: code, state: ru.searchParams.get("state") || state, codeVerifier };
+      const ru        = new URL(json.redirect_uri);
+      const code      = ru.searchParams.get("code");
+      const stateBack = ru.searchParams.get("state"); // state dari X, ini yang valid
+      if (code) return { authorizationCode: code, state: stateBack, codeVerifier };
     }
   } catch {}
 
@@ -342,6 +343,7 @@ async function linkTwitter(index, privyToken, twitterAccount) {
   log(`[${index + 1}] ✅  Twitter approved, code: ${authorizationCode.slice(0, 20)}…`);
 
   // 2. POST ke Privy /oauth/link
+  log(`[${index + 1}] 🔗  oauthLink payload: code=${authorizationCode.slice(0,20)}… verifier=${codeVerifier.slice(0,20)}… state=${state}`);
   const linkData = await privyOAuthLink(authorizationCode, codeVerifier, state, privyToken);
   log(`[${index + 1}] ✅  Twitter linked: ${JSON.stringify(linkData).slice(0, 150)}`);
 
