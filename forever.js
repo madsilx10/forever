@@ -191,7 +191,7 @@ async function privyGetSession(privyToken) {
 async function twitterGetAuthCode(authToken, ct0) {
   const codeVerifier  = generateCodeVerifier();
   const codeChallenge = generateCodeChallenge(codeVerifier);
-  const state         = crypto.randomBytes(16).toString("base64url");
+  const state         = crypto.randomBytes(32).toString("base64url"); // 43 char, sama seperti browser
 
   const CLIENT_ID    = "YlJMT0QtbzB1RU1kaDd6Q2xPem06MTpjaQ";
   const REDIRECT_URI = `${AUTH_URL}/api/v1/oauth/callback`;
@@ -299,10 +299,10 @@ async function twitterApprove(authToken, ct0) {
   try {
     const json = JSON.parse(text);
     if (json.redirect_uri) {
-      const ru        = new URL(json.redirect_uri);
-      const code      = ru.searchParams.get("code");
-      const stateBack = ru.searchParams.get("state"); // state dari X, ini yang valid
-      if (code) return { authorizationCode: code, state: stateBack, codeVerifier };
+      const ru   = new URL(json.redirect_uri);
+      const code = ru.searchParams.get("code");
+      // state_code = state yang kita kirim ke X (bukan yang balik dari redirect)
+      if (code) return { authorizationCode: code, state, codeVerifier };
     }
   } catch {}
 
