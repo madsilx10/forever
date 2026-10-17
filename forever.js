@@ -250,53 +250,52 @@ async function twitterGetAuthCode(authToken, ct0) {
 
 // ── Twitter OAuth: Step 3 – POST approval ke X ────────────────────────────────
 async function twitterApprove(authToken, ct0) {
-  const { formCode, state, codeVerifier, CLIENT_ID, REDIRECT_URI, authorizationCode, alreadyApproved } = await twitterGetAuthCode(authToken, ct0);
+  const { formCode, state, codeVerifier, authorizationCode, alreadyApproved } = await twitterGetAuthCode(authToken, ct0);
 
-  // Kalau sudah auto-approve (pernah login sebelumnya)
   if (alreadyApproved) return { authorizationCode, state, codeVerifier };
+
+  const TWITTER_BEARER = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA";
 
   const body = new URLSearchParams({
     approval     : "true",
-    code         : formCode,
+    code         : formCode,   // auth_code dari GET → jadi form "code" di POST
     consent_flow : "web_consent",
   });
-
-  // Bearer token publik Twitter untuk OAuth2
-  const TWITTER_BEARER = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA";
 
   const r = await fetch(`${TWITTER_API}/2/oauth2/authorize`, {
     method : "POST",
     headers: {
-      "User-Agent"           : "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
-      "Accept"               : "*/*",
-      "Accept-Language"      : "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
-      "Content-Type"         : "application/x-www-form-urlencoded",
-      "Authorization"        : `Bearer ${TWITTER_BEARER}`,
-      "X-Csrf-Token"         : ct0,
-      "X-Twitter-Auth-Type"  : "OAuth2Session",
+      "User-Agent"               : "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+      "Accept"                   : "application/json",
+      "Accept-Language"          : "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
+      "Content-Type"             : "application/x-www-form-urlencoded",
+      "Authorization"            : `Bearer ${TWITTER_BEARER}`,
+      "X-Csrf-Token"             : ct0,
+      "X-Twitter-Auth-Type"      : "OAuth2Session",
       "X-Twitter-Client-Language": "id",
-      "Cookie"               : `auth_token=${authToken}; ct0=${ct0}`,
-      "Origin"               : "https://x.com",
-      "Referer"              : "https://x.com/",
-      "Sec-Fetch-Dest"       : "empty",
-      "Sec-Fetch-Mode"       : "cors",
-      "Sec-Fetch-Site"       : "same-site",
+      "Cookie"                   : `auth_token=${authToken}; ct0=${ct0}`,
+      "Origin"                   : "https://x.com",
+      "Referer"                  : "https://x.com/",
+      "Sec-Fetch-Dest"           : "empty",
+      "Sec-Fetch-Mode"           : "cors",
+      "Sec-Fetch-Site"           : "same-site",
     },
     body    : body.toString(),
     redirect: "manual",
   });
 
-  // Cek redirect location untuk authorization_code
+  const text = await r.text();
+  log(`[twitterApprove] status: ${r.status}, body: ${text.slice(0, 300)}`);
+
+  // Cek Location header (redirect ke privy callback)
   const location = r.headers.get("location");
   if (location) {
     const locUrl = new URL(location);
     const code   = locUrl.searchParams.get("code");
-    const st     = locUrl.searchParams.get("state");
-    if (code) return { authorizationCode: code, state: st || state, codeVerifier };
+    if (code) return { authorizationCode: code, state: locUrl.searchParams.get("state") || state, codeVerifier };
   }
 
-  // Coba parse body JSON
-  const text = await r.text();
+  // Parse JSON response — X return { redirect_uri: "...?code=...&state=..." }
   try {
     const json = JSON.parse(text);
     if (json.redirect_uri) {
