@@ -422,35 +422,33 @@ async function privyOAuthLink(authorizationCode, codeVerifier, stateCode, privyT
 
 // ── Twitter OAuth: Step 4b – hit Privy callback langsung (Privy handle exchange) ─
 async function privyOAuthCallback(callbackUrl, privyToken) {
-  const privyHeaders = {
-    "User-Agent"   : "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
-    "Accept"       : "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Authorization": `Bearer ${privyToken}`,
-    "Privy-App-Id" : PRIVY_APP_ID,
-    "Privy-Ca-Id"  : "77d9238a-53d3-4b00-90bd-9907ca3d839e",
-    "Privy-Client" : "react-auth:3.5.1",
-    "Referer"      : "https://x.com/",
-  };
-
-  const r = await fetch(callbackUrl, { method: "GET", headers: privyHeaders, redirect: "manual" });
+  const r = await fetch(callbackUrl, {
+    method  : "GET",
+    headers : {
+      "User-Agent"   : "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+      "Accept"       : "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Authorization": `Bearer ${privyToken}`,
+      "Privy-App-Id" : PRIVY_APP_ID,
+      "Privy-Ca-Id"  : "77d9238a-53d3-4b00-90bd-9907ca3d839e",
+      "Privy-Client" : "react-auth:3.5.1",
+      "Referer"      : "https://x.com/",
+    },
+    redirect: "manual",
+  });
   const text = await r.text();
   log(`[oauthCallback] status: ${r.status}, body: ${text.slice(0, 200)}`);
-  const location = r.headers.get("location");
-  if (location) log(`[oauthCallback] redirect → ${location.slice(0, 200)}`);
   if (r.status >= 400) throw new Error(`oauthCallback HTTP ${r.status}: ${text}`);
 
-  // Follow 307 redirect ke Privy internal callback (privy_oauth_code)
-  if ((r.status === 301 || r.status === 302 || r.status === 307) && location) {
-    const r2 = await fetch(location, { method: "GET", headers: privyHeaders, redirect: "manual" });
-    const text2 = await r2.text();
-    log(`[oauthCallback2] status: ${r2.status}, body: ${text2.slice(0, 200)}`);
-    const location2 = r2.headers.get("location");
-    if (location2) log(`[oauthCallback2] redirect → ${location2.slice(0, 200)}`);
-    if (r2.status >= 400) throw new Error(`oauthCallback2 HTTP ${r2.status}: ${text2}`);
-    return { status: r2.status, location: location2 };
+  // Privy return 307 → extract privy_oauth_code dari redirect URL
+  const location = r.headers.get("location");
+  if (location) {
+    log(`[oauthCallback] redirect → ${location.slice(0, 200)}`);
+    const locUrl        = new URL(location);
+    const privyOAuthCode = locUrl.searchParams.get("privy_oauth_code");
+    if (privyOAuthCode) return { privyOAuthCode };
   }
 
-  return { status: r.status, location };
+  throw new Error(`oauthCallback: privy_oauth_code tidak ditemukan (status ${r.status})`);
 }
 
 // ── Link Twitter to wallet account ───────────────────────────────────────────
@@ -472,12 +470,17 @@ async function linkTwitter(index, privyToken, twitterAccount) {
   const state         = privyUrl.searchParams.get("state");
   const codeChallenge = privyUrl.searchParams.get("code_challenge");
 
-  // 1. Twitter approve → dapat authorization_code
-  const { authorizationCode } = await twitterApprove(auth_token, ct0, state, codeChallenge);
+  // 1. Twitter approve → dapat authorization_code + callbackUrl
+  const { authorizationCode, callbackUrl } = await twitterApprove(auth_token, ct0, state, codeChallenge);
   log(`[${index + 1}] ✅  Twitter approved, code: ${authorizationCode.slice(0, 20)}…`);
 
-  // 2. POST ke /api/v1/oauth/link → Privy exchange code + link akun
-  const linkData = await privyOAuthLink(authorizationCode, ourVerifier, ourState, privyToken);
+  // 2. Hit Privy callback → Privy exchange code server-side → dapat privy_oauth_code
+  log(`[${index + 1}] 🔗  oauthCallback: ${callbackUrl.slice(0, 100)}…`);
+  const { privyOAuthCode } = await privyOAuthCallback(callbackUrl, privyToken);
+  log(`[${index + 1}] ✅  Got privy_oauth_code`);
+
+  // 3. Finalize link dengan privy_oauth_code
+  const linkData = await privyOAuthLink(privyOAuthCode, ourVerifier, ourState, privyToken);
   log(`[${index + 1}] ✅  Twitter linked: ${JSON.stringify(linkData).slice(0, 200)}`);
 
   return linkData;
