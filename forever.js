@@ -205,7 +205,7 @@ async function privyOAuthInit(privyToken, codeChallenge, state) {
       code_challenge        : codeChallenge,
       code_challenge_method : "S256",
       state                 : state,
-      redirect_uri          : `${AUTH_URL}/api/v1/oauth/callback`,
+      redirect_to           : `${AUTH_URL}/api/v1/oauth/callback`,
     }),
   });
   if (!r.ok) throw new Error(`oauthInit HTTP ${r.status}: ${await r.text()}`);
