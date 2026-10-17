@@ -365,19 +365,19 @@ async function privyOAuthCallback(code, state, codeVerifier, privyToken) {
 async function linkTwitter(index, privyToken, twitterAccount) {
   const { auth_token, ct0 } = twitterAccount;
 
-  log(`[${index}] 🐦  Link Twitter dimulai...`);
+  log(`[${index + 1}] 🐦  Link Twitter dimulai...`);
 
   // 1. Init OAuth di Privy
   const { state, authorization_url, codeVerifier } = await privyOAuthInit(privyToken);
-  log(`[${index}] ✅  OAuth init OK, state: ${state.slice(0, 20)}…`);
+  log(`[${index + 1}] ✅  OAuth init OK, state: ${state.slice(0, 20)}…`);
 
   // 2. GET + POST approve di Twitter
   const { code } = await twitterApprove(authorization_url, auth_token, ct0);
-  log(`[${index}] ✅  Twitter approved, code: ${code.slice(0, 20)}…`);
+  log(`[${index + 1}] ✅  Twitter approved, code: ${code.slice(0, 20)}…`);
 
   // 3. Callback ke Privy
   const callbackData = await privyOAuthCallback(code, state, codeVerifier, privyToken);
-  log(`[${index}] ✅  Twitter linked: ${JSON.stringify(callbackData).slice(0, 100)}`);
+  log(`[${index + 1}] ✅  Twitter linked: ${JSON.stringify(callbackData).slice(0, 100)}`);
 
   return callbackData;
 }
@@ -388,47 +388,47 @@ async function processWallet(privkey, index, twitterAccount) {
   try {
     wallet = new ethers.Wallet(privkey.startsWith("0x") ? privkey : "0x" + privkey);
   } catch {
-    log(`[${index}] ❌  Private key tidak valid, skip.`);
+    log(`[${index + 1}] ❌  Private key tidak valid, skip.`);
     return { status: "invalid_key" };
   }
 
   const addr = wallet.address;
-  log(`[${index}] 🔑  ${addr}`);
+  log(`[${index + 1}] 🔑  ${addr}`);
 
   try {
     // 1. SIWE Init
     const { nonce, expires_at } = await siweInit(addr);
-    log(`[${index}] ✅  Nonce: ${nonce}`);
+    log(`[${index + 1}] ✅  Nonce: ${nonce}`);
 
     // 2. Sign
     const message   = buildSiweMessage(addr, nonce, expires_at);
     const signature = await wallet.signMessage(message);
-    log(`[${index}] ✅  Signed`);
+    log(`[${index + 1}] ✅  Signed`);
 
     // 3. Authenticate → dapat token
     const authData = await siweAuthenticate(message, signature);
     const token    = authData.token || authData.privy_access_token;
     if (!token) throw new Error("Token tidak ditemukan");
-    log(`[${index}] ✅  Auth token OK`);
+    log(`[${index + 1}] ✅  Auth token OK`);
 
     // 4. Register wallet
     const regData = await earlyAccessRegister(addr, token);
-    log(`[${index}] ✅  Register: ${JSON.stringify(regData)}`);
+    log(`[${index + 1}] ✅  Register: ${JSON.stringify(regData)}`);
 
     // 5. Link Twitter (jika ada)
     if (twitterAccount) {
       try {
         await linkTwitter(index, token, twitterAccount);
       } catch (tErr) {
-        log(`[${index}] ⚠️  Twitter gagal (wallet tetap terdaftar): ${tErr.message}`);
+        log(`[${index + 1}] ⚠️  Twitter gagal (wallet tetap terdaftar): ${tErr.message}`);
       }
     } else {
-      log(`[${index}] ⏭  Tidak ada akun Twitter, skip link.`);
+      log(`[${index + 1}] ⏭  Tidak ada akun Twitter, skip link.`);
     }
 
     return { status: "success", address: addr };
   } catch (err) {
-    log(`[${index}] ❌  Error: ${err.message}`);
+    log(`[${index + 1}] ❌  Error: ${err.message}`);
     return { status: "error", address: addr, error: err.message };
   }
 }
@@ -442,7 +442,7 @@ async function promptMode(total) {
   console.log("║   EnterForever Bot                 ║");
   console.log(`║   Wallet  : ${String(total).padEnd(22)}║`);
   console.log("╠════════════════════════════════════╣");
-  console.log("║  [1] 1 akun saja (pilih index)     ║");
+  console.log("║  [1] 1 akun saja (pilih nomor)     ║");
   console.log("║  [2] Semua akun                    ║");
   console.log("║  [3] From X to End                 ║");
   console.log("╚════════════════════════════════════╝");
@@ -451,15 +451,15 @@ async function promptMode(total) {
   let start = 0, end = total - 1;
 
   if (choice === "1") {
-    const idx = parseInt(await q(`Index akun (0–${total - 1}): `), 10);
-    if (isNaN(idx) || idx < 0 || idx >= total) { console.error("Index tidak valid."); process.exit(1); }
-    start = end = idx;
+    const num = parseInt(await q(`Nomor akun (1–${total}): `), 10);
+    if (isNaN(num) || num < 1 || num > total) { console.error("Nomor tidak valid."); process.exit(1); }
+    start = end = num - 1;
   } else if (choice === "2") {
     // semua
   } else if (choice === "3") {
-    const from = parseInt(await q(`Dari index (0–${total - 1}): `), 10);
-    if (isNaN(from) || from < 0 || from >= total) { console.error("Index tidak valid."); process.exit(1); }
-    start = from;
+    const from = parseInt(await q(`Dari nomor akun (1–${total}): `), 10);
+    if (isNaN(from) || from < 1 || from > total) { console.error("Nomor tidak valid."); process.exit(1); }
+    start = from - 1;
   } else {
     console.error("Pilihan tidak valid."); process.exit(1);
   }
@@ -477,11 +477,11 @@ async function promptMode(total) {
   console.log(`\n📂  Wallet   : ${total}`);
   console.log(`🐦  Twitter  : ${twitters.length}`);
   if (twitters.length > 0 && twitters.length < total) {
-    console.log(`⚠️   Jumlah Twitter < Wallet. Akun index ${twitters.length}–${total-1} skip Twitter.`);
+    console.log(`⚠️   Jumlah Twitter < Wallet. Akun ${twitters.length + 1}–${total} skip Twitter.`);
   }
 
   const { start, end } = await promptMode(total);
-  console.log(`\n▶  Proses index ${start}–${end} (${end - start + 1} akun)\n`);
+  console.log(`\n▶  Proses akun ${start + 1}–${end + 1} (${end - start + 1} akun)\n`);
 
   const results = { success: 0, error: 0, skip: 0 };
 
