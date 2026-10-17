@@ -172,6 +172,9 @@ async function privyOAuthInit(privyToken) {
   const codeVerifier  = generateCodeVerifier();
   const codeChallenge = generateCodeChallenge(codeVerifier);
 
+  // state = random string
+  const state = crypto.randomBytes(32).toString("base64url");
+
   const r = await fetch(`${AUTH_URL}/api/v1/oauth/init`, {
     method : "POST",
     headers: buildHeaders({
@@ -183,18 +186,16 @@ async function privyOAuthInit(privyToken) {
       "Privy-Client"   : "react-auth:3.5.1",
     }),
     body: JSON.stringify({
-      provider             : "twitter",
-      redirect_to          : `${BASE_URL}/`,
-      response_type        : "code",
-      scope                : "users.read tweet.read",
-      code_challenge       : codeChallenge,
-      code_challenge_method: "S256",
+      provider              : "twitter",
+      redirect_to           : `${BASE_URL}/`,
+      state                 : state,
+      code_challenge        : codeChallenge,
+      code_challenge_method : "S256",
     }),
   });
   if (!r.ok) throw new Error(`oauthInit HTTP ${r.status}: ${await r.text()}`);
   const data = await r.json();
-  // data: { state, authorization_url, ... }
-  return { ...data, codeVerifier, codeChallenge };
+  return { ...data, codeVerifier, codeChallenge, state };
 }
 
 // ── Twitter OAuth: Step 2 – GET authorize page (dapat auth_code) ──────────────
