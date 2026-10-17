@@ -12,7 +12,8 @@ const BASE_URL     = "https://enterforever.com";
 const AUTH_URL     = "https://auth.privy.io";
 const TWITTER_API  = "https://api.x.com";
 
-const DELAY_MS     = 3000;
+const DELAY_MIN_MS = 30_000;
+const DELAY_MAX_MS = 120_000;
 const LOG_FILE     = "forever-log.txt";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -481,16 +482,24 @@ async function processWallet(privkey, index, twitterAccount) {
     const regData = await earlyAccessRegister(addr, token);
     log(`[${index + 1}] ✅  Register: ${JSON.stringify(regData)}`);
 
-    // 4b. Share task + post tweet
+    // 4b. Klik task (earlyAccessShare)
     try {
       const shareData = await earlyAccessShare(token);
       log(`[${index + 1}] ✅  Share: ${JSON.stringify(shareData)}`);
-      if (twitterAccount) {
+    } catch (sErr) {
+      log(`[${index + 1}] ⚠️  Share gagal: ${sErr.message}`);
+    }
+
+    // 4c. Post tweet
+    if (twitterAccount) {
+      try {
         const tweetData = await postTweet(twitterAccount.auth_token, twitterAccount.ct0);
         log(`[${index + 1}] ✅  Tweet posted: id=${tweetData?.data?.id}`);
+      } catch (tErr) {
+        log(`[${index + 1}] ⚠️  Tweet gagal: ${tErr.message}`);
       }
-    } catch (sErr) {
-      log(`[${index + 1}] ⚠️  Share/tweet gagal: ${sErr.message}`);
+    } else {
+      log(`[${index + 1}] ⏭  Tidak ada akun Twitter, skip X post.`);
     }
 
     // 5. Link Twitter (jika ada)
@@ -569,7 +578,11 @@ async function promptMode(total) {
     if (res.status === "success")    results.success++;
     else if (res.status === "invalid_key") results.skip++;
     else results.error++;
-    if (i < end) await sleep(DELAY_MS);
+    if (i < end) {
+      const delay = Math.floor(Math.random() * (DELAY_MAX_MS - DELAY_MIN_MS + 1)) + DELAY_MIN_MS;
+      log(`⏳  Jeda ${(delay / 1000).toFixed(0)}s sebelum akun berikutnya...`);
+      await sleep(delay);
+    }
   }
 
   console.log("\n═══════ SUMMARY ═══════");
