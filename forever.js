@@ -208,7 +208,7 @@ const SHARE_TWEET = `I have registered to become an active participant in the em
 
 async function postTweet(authToken, ct0) {
   const TWITTER_BEARER = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA";
-  const r = await fetch(`${TWITTER_API}/2/tweets`, {
+  const r = await fetch(`${TWITTER_API}/graphql/a1p9RWpkYKBjWv_I3WzS-A/CreateTweet`, {
     method : "POST",
     headers: {
       "Content-Type"             : "application/json",
@@ -221,7 +221,30 @@ async function postTweet(authToken, ct0) {
       "Origin"                   : "https://x.com",
       "Referer"                  : "https://x.com/",
     },
-    body: JSON.stringify({ text: SHARE_TWEET }),
+    body: JSON.stringify({
+      variables: {
+        tweet_text            : SHARE_TWEET,
+        dark_request          : false,
+        media                 : { media_entities: [], possibly_sensitive: false },
+        semantic_annotation_ids: [],
+      },
+      features: {
+        tweetypie_unmention_optimization_enabled                          : true,
+        responsive_web_edit_tweet_api_enabled                             : true,
+        responsive_web_graphql_exclude_directive_enabled                  : true,
+        verified_phone_label_enabled                                      : false,
+        creator_subscriptions_tweet_preview_api_enabled                   : true,
+        responsive_web_graphql_timeline_navigation_enabled                : true,
+        responsive_web_graphql_skip_user_profile_image_extensions_enabled : false,
+        freedom_of_speech_not_reach_fetch_enabled                         : true,
+        standardized_nudges_misinfo                                       : true,
+        tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled: true,
+        longform_notetweets_production_enabled                            : true,
+        longform_notetweets_rich_text_read_enabled                        : true,
+        longform_notetweets_inline_media_enabled                          : true,
+        responsive_web_enhance_cards_enabled                              : false,
+      },
+    }),
   });
   if (!r.ok) throw new Error(`postTweet HTTP ${r.status}: ${await r.text()}`);
   return r.json();
@@ -482,7 +505,18 @@ async function processWallet(privkey, index, twitterAccount) {
     const regData = await earlyAccessRegister(addr, token);
     log(`[${index + 1}] ✅  Register: ${JSON.stringify(regData)}`);
 
-    // 4b. Klik task (earlyAccessShare)
+    // 5. Link Twitter dulu
+    if (twitterAccount) {
+      try {
+        await linkTwitter(index, token, twitterAccount);
+      } catch (tErr) {
+        log(`[${index + 1}] ⚠️  Twitter link gagal (wallet tetap terdaftar): ${tErr.message}`);
+      }
+    } else {
+      log(`[${index + 1}] ⏭  Tidak ada akun Twitter, skip link.`);
+    }
+
+    // 6. Share task (simulate klik task)
     try {
       const shareData = await earlyAccessShare(token);
       log(`[${index + 1}] ✅  Share: ${JSON.stringify(shareData)}`);
@@ -490,7 +524,7 @@ async function processWallet(privkey, index, twitterAccount) {
       log(`[${index + 1}] ⚠️  Share gagal: ${sErr.message}`);
     }
 
-    // 4c. Post tweet
+    // 7. Post tweet
     if (twitterAccount) {
       try {
         const tweetData = await postTweet(twitterAccount.auth_token, twitterAccount.ct0);
@@ -500,17 +534,6 @@ async function processWallet(privkey, index, twitterAccount) {
       }
     } else {
       log(`[${index + 1}] ⏭  Tidak ada akun Twitter, skip X post.`);
-    }
-
-    // 5. Link Twitter (jika ada)
-    if (twitterAccount) {
-      try {
-        await linkTwitter(index, token, twitterAccount);
-      } catch (tErr) {
-        log(`[${index + 1}] ⚠️  Twitter gagal (wallet tetap terdaftar): ${tErr.message}`);
-      }
-    } else {
-      log(`[${index + 1}] ⏭  Tidak ada akun Twitter, skip link.`);
     }
 
     return { status: "success", address: addr };
