@@ -188,7 +188,7 @@ async function privyGetSession(privyToken) {
 }
 
 // ── Twitter OAuth: Step 0 – Register OAuth flow dengan Privy ─────────────────
-async function privyOAuthInit(privyToken, codeChallenge, state) {
+async function privyOAuthInit(privyToken) {
   const r = await fetch(`${AUTH_URL}/api/v1/oauth/init`, {
     method : "POST",
     headers: buildHeaders({
@@ -201,19 +201,16 @@ async function privyOAuthInit(privyToken, codeChallenge, state) {
       "Privy-Client"            : "react-auth:3.5.1",
     }),
     body: JSON.stringify({
-      provider              : "twitter",
-      code_challenge        : codeChallenge,
-      code_challenge_method : "S256",
-      state_code            : state,
-      redirect_to           : `${AUTH_URL}/api/v1/oauth/callback`,
+      provider   : "twitter",
+      redirect_to: `${AUTH_URL}/api/v1/oauth/callback`,
     }),
   });
   if (!r.ok) throw new Error(`oauthInit HTTP ${r.status}: ${await r.text()}`);
-  return r.json();
+  return r.json(); // { url: "https://x.com/i/oauth2/authorize?...&state=...&code_challenge=..." }
 }
 
 // ── Twitter OAuth: Step 2 – Get auth_code via X API JSON endpoint ─────────────
-async function twitterGetAuthCode(authToken, ct0, state, codeVerifier, codeChallenge) {
+async function twitterGetAuthCode(authToken, ct0, state, codeChallenge) {
   const CLIENT_ID    = "YlJMT0QtbzB1RU1kaDd6Q2xPem06MTpjaQ";
   const REDIRECT_URI = `${AUTH_URL}/api/v1/oauth/callback`;
   const TWITTER_BEARER = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA";
@@ -260,20 +257,20 @@ async function twitterGetAuthCode(authToken, ct0, state, codeVerifier, codeChall
     if (json.redirect_uri) {
       const ru = new URL(json.redirect_uri);
       const ac = ru.searchParams.get("code");
-      if (ac) return { authorizationCode: ac, state: ru.searchParams.get("state") || state, codeVerifier, alreadyApproved: true };
+      if (ac) return { authorizationCode: ac, callbackUrl: json.redirect_uri, state: ru.searchParams.get("state") || state, alreadyApproved: true };
     }
   } catch {}
 
   if (!formCode) throw new Error(`Gagal dapat auth_code dari X API. Status: ${r.status}, Body: ${text.slice(0, 300)}`);
 
-  return { formCode, state, codeVerifier, CLIENT_ID, REDIRECT_URI };
+  return { formCode, state, CLIENT_ID, REDIRECT_URI };
 }
 
 // ── Twitter OAuth: Step 3 – POST approval ke X ────────────────────────────────
-async function twitterApprove(authToken, ct0, state, codeVerifier, codeChallenge) {
-  const { formCode, authorizationCode, alreadyApproved } = await twitterGetAuthCode(authToken, ct0, state, codeVerifier, codeChallenge);
+async function twitterApprove(authToken, ct0, state, codeChallenge) {
+  const { formCode, authorizationCode, callbackUrl, alreadyApproved } = await twitterGetAuthCode(authToken, ct0, state, codeChallenge);
 
-  if (alreadyApproved) return { authorizationCode, state, codeVerifier };
+  if (alreadyApproved) return { authorizationCode, callbackUrl, state };
 
   const TWITTER_BEARER = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA";
 
@@ -313,7 +310,7 @@ async function twitterApprove(authToken, ct0, state, codeVerifier, codeChallenge
   if (location) {
     const locUrl = new URL(location);
     const code   = locUrl.searchParams.get("code");
-    if (code) return { authorizationCode: code, state: locUrl.searchParams.get("state") || state, codeVerifier };
+    if (code) return { authorizationCode: code, callbackUrl: location, state: locUrl.searchParams.get("state") || state };
   }
 
   // Parse JSON response — X return { redirect_uri: "...?code=...&state=..." }
@@ -322,8 +319,7 @@ async function twitterApprove(authToken, ct0, state, codeVerifier, codeChallenge
     if (json.redirect_uri) {
       const ru   = new URL(json.redirect_uri);
       const code = ru.searchParams.get("code");
-      // state_code = state yang kita kirim ke X (bukan yang balik dari redirect)
-      if (code) return { authorizationCode: code, state, codeVerifier };
+      if (code) return { authorizationCode: code, callbackUrl: json.redirect_uri, state: ru.searchParams.get("state") || state };
     }
   } catch {}
 
@@ -353,31 +349,57 @@ async function privyOAuthLink(authorizationCode, codeVerifier, stateCode, privyT
   return r.json();
 }
 
+// ── Twitter OAuth: Step 4b – hit Privy callback langsung (Privy handle exchange) ─
+async function privyOAuthCallback(callbackUrl, privyToken) {
+  const r = await fetch(callbackUrl, {
+    method  : "GET",
+    headers : {
+      "User-Agent"              : "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+      "Accept"                  : "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Authorization"           : `Bearer ${privyToken}`,
+      "Privy-App-Id"            : PRIVY_APP_ID,
+      "Privy-Ca-Id"             : "77d9238a-53d3-4b00-90bd-9907ca3d839e",
+      "Privy-Client"            : "react-auth:3.5.1",
+      "Referer"                 : "https://x.com/",
+      "Sec-Fetch-Dest"          : "document",
+      "Sec-Fetch-Mode"          : "navigate",
+      "Sec-Fetch-Site"          : "cross-site",
+    },
+    redirect: "manual",
+  });
+  const text = await r.text();
+  log(`[oauthCallback] status: ${r.status}, body: ${text.slice(0, 200)}`);
+  const location = r.headers.get("location");
+  if (location) log(`[oauthCallback] redirect → ${location.slice(0, 200)}`);
+  if (r.status >= 400) throw new Error(`oauthCallback HTTP ${r.status}: ${text}`);
+  return { status: r.status, location };
+}
+
 // ── Link Twitter to wallet account ───────────────────────────────────────────
 async function linkTwitter(index, privyToken, twitterAccount) {
   const { auth_token, ct0 } = twitterAccount;
 
   log(`[${index + 1}] 🐦  Link Twitter dimulai...`);
 
-  const codeVerifier  = generateCodeVerifier();
-  const codeChallenge = generateCodeChallenge(codeVerifier);
-  const state         = crypto.randomBytes(32).toString("base64url");
-
-  // 0. Register flow dengan Privy agar state dikenali saat /oauth/link
-  const initData      = await privyOAuthInit(privyToken, codeChallenge, state);
-  const effectiveState = initData.state_code || initData.state || state;
+  // 0. Init via Privy – biar Privy generate state + code_challenge sendiri
+  const initData = await privyOAuthInit(privyToken);
   log(`[${index + 1}] ✅  OAuth init OK: ${JSON.stringify(initData).slice(0, 300)}`);
 
-  // 1. GET Twitter authorize + POST approve → dapat authorization_code
-  const { authorizationCode } = await twitterApprove(auth_token, ct0, effectiveState, codeVerifier, codeChallenge);
+  // Parse params dari URL Privy (bukan generate sendiri)
+  const privyUrl      = new URL(initData.url);
+  const state         = privyUrl.searchParams.get("state");
+  const codeChallenge = privyUrl.searchParams.get("code_challenge");
+
+  // 1. GET Twitter authorize + POST approve → dapat authorization_code + callbackUrl
+  const { authorizationCode, callbackUrl } = await twitterApprove(auth_token, ct0, state, codeChallenge);
   log(`[${index + 1}] ✅  Twitter approved, code: ${authorizationCode.slice(0, 20)}…`);
 
-  // 2. POST ke Privy /oauth/link
-  log(`[${index + 1}] 🔗  oauthLink payload: code=${authorizationCode.slice(0,20)}… verifier=${codeVerifier.slice(0,20)}… state=${effectiveState}`);
-  const linkData = await privyOAuthLink(authorizationCode, codeVerifier, effectiveState, privyToken);
-  log(`[${index + 1}] ✅  Twitter linked: ${JSON.stringify(linkData).slice(0, 150)}`);
+  // 2. Hit Privy callback langsung – Privy exchange code server-side pakai verifier-nya sendiri
+  log(`[${index + 1}] 🔗  oauthCallback: ${callbackUrl.slice(0, 100)}…`);
+  const result = await privyOAuthCallback(callbackUrl, privyToken);
+  log(`[${index + 1}] ✅  Twitter linked (status ${result.status})`);
 
-  return linkData;
+  return result;
 }
 
 // ── Per-wallet flow ───────────────────────────────────────────────────────────
