@@ -187,6 +187,45 @@ async function privyGetSession(privyToken) {
   return data; // { token, refresh_token, ... }
 }
 
+// ── Step 4: Share / open task ─────────────────────────────────────────────────
+async function earlyAccessShare(bearerToken) {
+  const r = await fetch(`${BASE_URL}/api/early-access/share`, {
+    method : "POST",
+    headers: buildHeaders({
+      "Authorization" : `Bearer ${bearerToken}`,
+      "Referer"       : `${BASE_URL}/`,
+      "Sec-Fetch-Site": "same-origin",
+    }),
+    body: JSON.stringify({}),
+  });
+  if (!r.ok) throw new Error(`share HTTP ${r.status}: ${await r.text()}`);
+  return r.json();
+}
+
+// ── Post tweet share ─────────────────────────────────────────────────────────
+const SHARE_TWEET = `I have registered to become an active participant in the emergence of a new autonomous network economy.\n\nI believe in forever.\nhttps://x.com/forevercultfund/status/2111124183082287549`;
+
+async function postTweet(authToken, ct0) {
+  const TWITTER_BEARER = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA";
+  const r = await fetch(`${TWITTER_API}/2/tweets`, {
+    method : "POST",
+    headers: {
+      "Content-Type"             : "application/json",
+      "Authorization"            : `Bearer ${TWITTER_BEARER}`,
+      "X-Csrf-Token"             : ct0,
+      "X-Twitter-Auth-Type"      : "OAuth2Session",
+      "X-Twitter-Client-Language": "id",
+      "Cookie"                   : `auth_token=${authToken}; ct0=${ct0}`,
+      "User-Agent"               : "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+      "Origin"                   : "https://x.com",
+      "Referer"                  : "https://x.com/",
+    },
+    body: JSON.stringify({ text: SHARE_TWEET }),
+  });
+  if (!r.ok) throw new Error(`postTweet HTTP ${r.status}: ${await r.text()}`);
+  return r.json();
+}
+
 // ── Twitter OAuth: Step 0 – Register OAuth flow dengan Privy ─────────────────
 async function privyOAuthInit(privyToken, codeChallenge, stateCode) {
   const r = await fetch(`${AUTH_URL}/api/v1/oauth/init`, {
@@ -441,6 +480,18 @@ async function processWallet(privkey, index, twitterAccount) {
     // 4. Register wallet
     const regData = await earlyAccessRegister(addr, token);
     log(`[${index + 1}] ✅  Register: ${JSON.stringify(regData)}`);
+
+    // 4b. Share task + post tweet
+    try {
+      const shareData = await earlyAccessShare(token);
+      log(`[${index + 1}] ✅  Share: ${JSON.stringify(shareData)}`);
+      if (twitterAccount) {
+        const tweetData = await postTweet(twitterAccount.auth_token, twitterAccount.ct0);
+        log(`[${index + 1}] ✅  Tweet posted: id=${tweetData?.data?.id}`);
+      }
+    } catch (sErr) {
+      log(`[${index + 1}] ⚠️  Share/tweet gagal: ${sErr.message}`);
+    }
 
     // 5. Link Twitter (jika ada)
     if (twitterAccount) {
